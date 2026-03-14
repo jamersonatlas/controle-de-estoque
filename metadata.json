@@ -1,0 +1,5 @@
+{
+  "name": "StockMaster: Controle de Estoque Profissional",
+  "description": "Sistema completo para gestão de inventário, controle de entradas e saídas, alertas de estoque baixo e relatórios em tempo real.",
+  "requestFramePermissions": []
+}
