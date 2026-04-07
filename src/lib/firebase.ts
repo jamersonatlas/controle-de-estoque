@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
-// As suas chaves secretas do Firebase!
 const firebaseConfig = {
   apiKey: "AIzaSyA4jbp0i9e141xDuyU4DVgNfZsuo4xw_AA",
   authDomain: "controle-de-estoque-98807.firebaseapp.com",
@@ -11,6 +11,6 @@ const firebaseConfig = {
   appId: "1:325645001508:web:724f07aa2f6754d48649b1"
 };
 
-// Conectando o Firebase e o Banco de Dados
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+export const auth = getAuth(app);
