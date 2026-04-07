@@ -38,7 +38,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, StockEntry, Conference, Tab } from './types';
-import { supabase } from './lib/supabase';
+import { db } from './lib/firebase';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, writeBatch } from 'firebase/firestore';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -69,7 +70,7 @@ export default function App() {
     if (savedAuth === 'true') setIsAuthenticated(true);
   }, []);
 
-  // Load data from Supabase
+  // Load data from Firebase
   useEffect(() => {
     if (isAuthenticated) {
       fetchData();
@@ -79,19 +80,33 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [productsRes, historyRes, auditsRes] = await Promise.all([
-        supabase.from('produtos').select('*').order('nome'),
-        supabase.from('entradas_estoque').select('*, produto:produtos(*)').order('created_at', { ascending: false }),
-        supabase.from('conferencias').select('*, items:conferencia_itens(*, produto:produtos(*))').order('created_at', { ascending: false })
-      ]);
+      // Fetch Produtos
+      const pSnap = await getDocs(query(collection(db, 'produtos'), orderBy('nome')));
+      const pData = pSnap.docs.map(d => ({ id: d.id, ...d.data() })) as Product[];
 
-      if (productsRes.error) throw productsRes.error;
-      if (historyRes.error) throw historyRes.error;
-      if (auditsRes.error) throw auditsRes.error;
+      // Fetch Entradas
+      const hSnap = await getDocs(query(collection(db, 'entradas_estoque'), orderBy('created_at', 'desc')));
+      const hData = hSnap.docs.map(d => {
+        const data = d.data();
+        return { id: d.id, ...data, produto: pData.find(p => p.id === data.produto_id) };
+      }) as StockEntry[];
 
-      setProducts(productsRes.data || []);
-      setHistory(historyRes.data || []);
-      setAudits(auditsRes.data || []);
+      // Fetch Conferencias e Itens
+      const cSnap = await getDocs(query(collection(db, 'conferencias'), orderBy('created_at', 'desc')));
+      const iSnap = await getDocs(collection(db, 'conferencia_itens'));
+      const allItems = iSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+
+      const cData = cSnap.docs.map(d => {
+        const data = d.data();
+        const items = allItems
+          .filter(i => i.conferencia_id === d.id)
+          .map(i => ({ ...i, produto: pData.find(p => p.id === i.produto_id) }));
+        return { id: d.id, ...data, items };
+      }) as Conference[];
+
+      setProducts(pData);
+      setHistory(hData);
+      setAudits(cData);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
       showNotification('Erro ao carregar dados do servidor.', 'error');
@@ -122,7 +137,6 @@ export default function App() {
     const totalItems = products.reduce((acc, p) => acc + p.estoque_atual, 0);
     const totalValue = products.reduce((acc, p) => acc + (p.estoque_atual * p.valor_venda), 0);
     
-    // Calculate "Vendido" based on last audit
     const lastAudit = audits[0];
     const totalSoldValue = lastAudit?.total_vendido || 0;
 
@@ -146,17 +160,15 @@ export default function App() {
 
     try {
       if (editingProduct) {
-        const { error } = await supabase
-          .from('produtos')
-          .update({ nome, estoque_atual, valor_venda })
-          .eq('id', editingProduct.id);
-        if (error) throw error;
+        await updateDoc(doc(db, 'produtos', editingProduct.id), { nome, estoque_atual, valor_venda });
         showNotification('Produto atualizado com sucesso!', 'success');
       } else {
-        const { error } = await supabase
-          .from('produtos')
-          .insert([{ nome, estoque_atual, valor_venda }]);
-        if (error) throw error;
+        await addDoc(collection(db, 'produtos'), { 
+          nome, 
+          estoque_atual, 
+          valor_venda,
+          created_at: new Date().toISOString()
+        });
         showNotification('Produto cadastrado com sucesso!', 'success');
       }
       
@@ -176,13 +188,12 @@ export default function App() {
       onConfirm: async () => {
         setConfirmDialog(null);
         try {
-          const { error } = await supabase.from('produtos').delete().eq('id', id);
-          if (error) throw error;
+          await deleteDoc(doc(db, 'produtos', id));
           showNotification('Produto excluído com sucesso!', 'success');
           await fetchData();
         } catch (error) {
           console.error('Erro ao excluir produto:', error);
-          showNotification('Erro ao excluir produto. Verifique se existem entradas ou conferências vinculadas.', 'error');
+          showNotification('Erro ao excluir produto. Verifique se existem dependências.', 'error');
         }
       }
     });
@@ -200,31 +211,23 @@ export default function App() {
     if (!product) return;
 
     try {
+      const batch = writeBatch(db);
+
       // 1. Insert entry
-      const { error: entryError } = await supabase
-        .from('entradas_estoque')
-        .insert([{ 
-          produto_id, 
-          quantidade_entrada, 
-          data_entrada, 
-          observacao 
-        }]);
-      
-      if (entryError) {
-        console.error('Erro detalhado no insert de entrada:', entryError);
-        throw entryError;
-      }
+      const entryRef = doc(collection(db, 'entradas_estoque'));
+      batch.set(entryRef, {
+        produto_id,
+        quantidade_entrada,
+        data_entrada,
+        observacao,
+        created_at: new Date().toISOString()
+      });
 
       // 2. Update product stock
-      const { error: productError } = await supabase
-        .from('produtos')
-        .update({ estoque_atual: product.estoque_atual + quantidade_entrada })
-        .eq('id', produto_id);
-      
-      if (productError) {
-        console.error('Erro detalhado no update de estoque:', productError);
-        throw productError;
-      }
+      const productRef = doc(db, 'produtos', produto_id);
+      batch.update(productRef, { estoque_atual: product.estoque_atual + quantidade_entrada });
+
+      await batch.commit();
 
       await fetchData();
       setIsEntryModalOpen(false);
@@ -251,12 +254,13 @@ export default function App() {
         console.log('>>> INICIANDO FLUXO DE FINALIZAÇÃO DE CONFERÊNCIA <<<');
         
         try {
+          const batch = writeBatch(db);
           const data_conferencia = new Date().toISOString();
           let total_vendido = 0;
-          const itensParaInserir: any[] = [];
-          const updatesProdutos: any[] = [];
 
-          // A. Calcular valores e preparar dados
+          // Referência para a nova conferência
+          const confRef = doc(collection(db, 'conferencias'));
+
           products.forEach(p => {
             const estoque_contado = auditCounts[p.id] ?? p.estoque_atual;
             const estoque_anterior = p.estoque_atual;
@@ -268,7 +272,10 @@ export default function App() {
               total_vendido += valor_total;
             }
 
-            itensParaInserir.push({
+            // Inserir item
+            const itemRef = doc(collection(db, 'conferencia_itens'));
+            batch.set(itemRef, {
+              conferencia_id: confRef.id,
               produto_id: p.id,
               estoque_anterior,
               estoque_contado,
@@ -277,40 +284,20 @@ export default function App() {
               valor_total
             });
 
-            updatesProdutos.push({
-              id: p.id,
-              estoque_atual: estoque_contado,
-              nome: p.nome
-            });
+            // Atualizar estoque
+            const prodRef = doc(db, 'produtos', p.id);
+            batch.update(prodRef, { estoque_atual: estoque_contado });
           });
 
-          // B. Inserir em conferencias
-          const { data: conference, error: confError } = await supabase
-            .from('conferencias')
-            .insert([{ data_conferencia, total_vendido }])
-            .select()
-            .single();
-          
-          if (confError) throw new Error(`Falha ao criar registro de conferência: ${confError.message}`);
-          
-          const conferencia_id = conference.id;
-
-          // C. Inserir itens
-          const itensComId = itensParaInserir.map(item => ({ ...item, conferencia_id }));
-          const { error: itemsError } = await supabase.from('conferencia_itens').insert(itensComId);
-          if (itemsError) throw new Error(`Falha ao inserir itens da conferência: ${itemsError.message}`);
-
-          // D. Atualizar produtos
-          const updatePromises = updatesProdutos.map(async (update) => {
-            const { error: updateError } = await supabase
-              .from('produtos')
-              .update({ estoque_atual: update.estoque_atual })
-              .eq('id', update.id);
-            if (updateError) throw updateError;
+          // Inserir cabeçalho da conferência
+          batch.set(confRef, { 
+            data_conferencia, 
+            total_vendido,
+            created_at: new Date().toISOString()
           });
-          await Promise.all(updatePromises);
 
-          // E. Recarregar
+          await batch.commit();
+
           await fetchData();
           setAuditCounts({});
           showNotification('Conferência finalizada com sucesso! O estoque foi atualizado.', 'success');
@@ -453,19 +440,10 @@ export default function App() {
             {activeTab === 'history_conferences' && 'Histórico de Conferências'}
             {activeTab === 'reports' && 'Relatórios'}
           </h2>
-          <div className="w-10 lg:hidden" /> {/* Spacer for centering title on mobile if needed */}
+          <div className="w-10 lg:hidden" />
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
-          {!(import.meta as any).env.VITE_SUPABASE_ANON_KEY && (
-            <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-3 text-amber-800">
-              <AlertTriangle className="w-5 h-5 shrink-0" />
-              <div className="text-sm">
-                <p className="font-bold">Configuração Necessária</p>
-                <p>A chave do Supabase não foi encontrada. Por favor, configure <strong>VITE_SUPABASE_ANON_KEY</strong> no menu Settings para ativar o banco de dados.</p>
-              </div>
-            </div>
-          )}
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sidebar"></div>
@@ -507,13 +485,13 @@ export default function App() {
                       </div>
                       {audits[0] ? (
                         <div className="space-y-3">
-                          {audits[0].items?.filter(i => i.diferenca < 0).sort((a, b) => a.diferenca - b.diferenca).slice(0, 1).map(i => (
+                          {audits[0].items?.filter(i => (i.quantidade_saida ?? 0) > 0).sort((a, b) => (b.quantidade_saida ?? 0) - (a.quantidade_saida ?? 0)).slice(0, 1).map((i: any) => (
                             <div key={i.id} className="flex items-center justify-between p-2">
                               <span className="text-sm font-medium">{i.produto?.nome}</span>
-                              <span className="text-sm font-bold text-danger">{i.diferenca}</span>
+                              <span className="text-sm font-bold text-danger">-{i.quantidade_saida}</span>
                             </div>
                           ))}
-                          {audits[0].items?.filter(i => i.diferenca < 0).length === 0 && (
+                          {audits[0].items?.filter(i => (i.quantidade_saida ?? 0) > 0).length === 0 && (
                             <p className="text-sm text-slate-400 italic">Nenhuma saída na última conferência</p>
                           )}
                         </div>
@@ -542,7 +520,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* New Stock Overview Section */}
+                  {/* Stock Overview Section */}
                   <div className="card">
                     <div className="p-6 border-b border-border flex flex-col sm:flex-row items-center justify-between gap-4">
                       <div className="flex items-center gap-2">
@@ -560,7 +538,6 @@ export default function App() {
                       </div>
                     </div>
                     <div className="block">
-                      {/* Desktop Table */}
                       <table className="w-full hidden md:table">
                         <thead>
                           <tr>
@@ -598,7 +575,6 @@ export default function App() {
                         </tbody>
                       </table>
 
-                      {/* Mobile Card List */}
                       <div className="md:hidden divide-y divide-border">
                         {products
                           .filter(p => p.nome.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -662,7 +638,6 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="block">
-                        {/* Desktop Table */}
                         <table className="w-full hidden md:table">
                           <thead>
                             <tr>
@@ -697,7 +672,6 @@ export default function App() {
                           </tbody>
                         </table>
 
-                        {/* Mobile Card List */}
                         <div className="md:hidden divide-y divide-border">
                           {filteredProducts.map(p => (
                             <div key={p.id} className="p-4 space-y-3">
@@ -797,7 +771,6 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="block">
-                      {/* Desktop Table */}
                       <div className="hidden md:block overflow-x-auto">
                         <table className="w-full">
                           <thead>
@@ -844,7 +817,6 @@ export default function App() {
                         </table>
                       </div>
 
-                      {/* Mobile Card List */}
                       <div className="md:hidden divide-y divide-border">
                         {products.map(p => {
                           const counted = auditCounts[p.id] ?? p.estoque_atual;
@@ -901,7 +873,6 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="block">
-                      {/* Desktop Table */}
                       <div className="hidden md:block overflow-x-auto">
                         <table className="w-full">
                           <thead>
@@ -923,7 +894,6 @@ export default function App() {
                         </table>
                       </div>
 
-                      {/* Mobile Card List */}
                       <div className="md:hidden divide-y divide-border">
                         {history.map(t => (
                           <div key={t.id} className="p-4 space-y-2">
@@ -953,7 +923,6 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="block">
-                      {/* Desktop Table */}
                       <div className="hidden md:block overflow-x-auto">
                         <table className="w-full">
                           <thead>
@@ -986,7 +955,6 @@ export default function App() {
                         </table>
                       </div>
 
-                      {/* Mobile Card List */}
                       <div className="md:hidden divide-y divide-border">
                         {audits.map(a => (
                           <div key={a.id} className="p-4 space-y-3">
@@ -1095,7 +1063,6 @@ export default function App() {
                   </div>
 
                   <div className="border border-border rounded-xl overflow-hidden">
-                    {/* Desktop Table */}
                     <table className="w-full text-sm hidden md:table">
                       <thead className="bg-slate-50">
                         <tr>
@@ -1107,7 +1074,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {viewingAudit.items?.map((item, idx) => (
+                        {viewingAudit.items?.map((item: any, idx: number) => (
                           <tr key={idx} className={item.quantidade_saida !== 0 ? 'bg-slate-50/30' : ''}>
                             <td className="px-4 py-3 font-medium text-slate-700">{item.produto?.nome}</td>
                             <td className="px-4 py-3 text-center text-slate-500">{item.estoque_anterior}</td>
@@ -1125,9 +1092,8 @@ export default function App() {
                       </tbody>
                     </table>
 
-                    {/* Mobile Card List */}
                     <div className="md:hidden divide-y divide-border">
-                      {viewingAudit.items?.map((item, idx) => (
+                      {viewingAudit.items?.map((item: any, idx: number) => (
                         <div key={idx} className={`p-4 space-y-2 ${item.quantidade_saida !== 0 ? 'bg-slate-50/30' : ''}`}>
                           <div className="flex justify-between items-start">
                             <span className="font-bold text-slate-700">{item.produto?.nome}</span>
@@ -1219,4 +1185,3 @@ export default function App() {
     </div>
   );
 }
-
