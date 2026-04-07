@@ -8,9 +8,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, StockEntry, Conference, Tab } from './types';
-import { db, auth } from './lib/firebase';
+import { db } from './lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, writeBatch } from 'firebase/firestore';
-import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -34,16 +33,13 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setIsAuthenticated(true);
-        fetchData();
-      } else {
-        setIsAuthenticated(false);
-        setLoading(false);
-      }
-    });
-    return () => unsubscribe();
+    const savedAuth = localStorage.getItem('estoqueapp_auth');
+    if (savedAuth === 'true') {
+      setIsAuthenticated(true);
+      fetchData();
+    } else {
+      setLoading(false);
+    }
   }, []);
 
   const fetchData = async () => {
@@ -76,29 +72,26 @@ export default function App() {
     }
   };
 
-  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const email = (formData.get('user') as string).trim().toLowerCase(); // Garante e-mail limpo
+    const user = formData.get('user') as string;
     const pass = formData.get('pass') as string;
     
-    setLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, email, pass);
-      showNotification('Login realizado!', 'success');
-    } catch (error: any) {
-      console.error("Erro no login:", error.code);
-      showNotification('E-mail ou senha incorretos.', 'error');
-    } finally {
-      setLoading(false);
+    if (user.length >= 4 && pass.length >= 4) {
+      setIsAuthenticated(true);
+      localStorage.setItem('estoqueapp_auth', 'true');
+      fetchData();
+    } else {
+      showNotification('Mínimo 4 caracteres', 'error');
     }
   };
 
-  const handleLogout = async () => {
-    await signOut(auth);
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem('estoqueapp_auth');
   };
 
-  // Restante das funções (Save, Delete, Entry, Audit)
   const handleSaveProduct = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -188,36 +181,30 @@ export default function App() {
               <TrendingUp className="text-white w-10 h-10" />
             </div>
             <h1 className="text-3xl font-bold text-slate-800">EstoqueApp</h1>
-            <p className="text-slate-500 font-medium">Use seu e-mail e senha cadastrados</p>
+            <p className="text-slate-500 font-medium">Acesse com qualquer login e senha</p>
           </div>
           <div className="card p-8">
             <form onSubmit={handleLogin} className="space-y-6">
               <div>
-                <label className="text-sm font-semibold text-slate-600 mb-2 block">E-mail</label>
+                <label className="text-sm font-semibold text-slate-600 mb-2 block">Usuário</label>
                 <div className="relative">
                   <User className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input name="user" type="email" required className="input pl-11" placeholder="exemplo@email.com" />
+                  <input name="user" required className="input pl-11" placeholder="Seu usuário" />
                 </div>
               </div>
               <div>
                 <label className="text-sm font-semibold text-slate-600 mb-2 block">Senha</label>
                 <div className="relative">
                   <Lock className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input name="pass" type="password" required className="input pl-11" placeholder="Sua senha" />
+                  <input name="pass" type="password" required className="input pl-11" placeholder="••••••" />
                 </div>
               </div>
-              <button type="submit" disabled={loading} className="btn btn-primary w-full py-3 text-lg">
-                {loading ? 'Validando...' : 'Entrar'} <ArrowRight className="w-5 h-5 ml-2" />
+              <button type="submit" className="btn btn-primary w-full py-3 text-lg">
+                Entrar <ArrowRight className="w-5 h-5 ml-2" />
               </button>
             </form>
           </div>
         </motion.div>
-        <AnimatePresence>{notification && (
-          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }}
-            className={`fixed bottom-6 right-6 p-4 rounded-xl border z-[100] ${notification.type === 'error' ? 'bg-rose-50 text-rose-800 border-rose-200' : 'bg-emerald-50 text-emerald-800 border-emerald-200'}`}>
-            <span className="font-bold">{notification.message}</span>
-          </motion.div>
-        )}</AnimatePresence>
       </div>
     );
   }
@@ -227,7 +214,7 @@ export default function App() {
       <aside className="w-64 bg-sidebar hidden lg:flex flex-col">
         <div className="p-6 flex items-center gap-3">
           <div className="w-10 h-10 bg-warning rounded-lg flex items-center justify-center"><TrendingUp className="text-white w-6 h-6" /></div>
-          <div><h1 className="font-bold text-white">EstoqueApp</h1><p className="text-[10px] text-slate-400 uppercase">Acesso Seguro</p></div>
+          <div><h1 className="font-bold text-white">EstoqueApp</h1></div>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
           <button onClick={() => setActiveTab('dashboard')} className={`sidebar-item ${activeTab === 'dashboard' ? 'sidebar-item-active' : ''}`}><LayoutDashboard className="w-5 h-5" /> Dashboard</button>
@@ -244,7 +231,7 @@ export default function App() {
         </header>
         <div className="flex-1 overflow-y-auto p-8">
           {loading ? <div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sidebar"></div></div> : (
-            <AnimatePresence mode="wait">
+            <div className="space-y-8">
               {activeTab === 'dashboard' && (
                 <div className="space-y-8">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -300,11 +287,11 @@ export default function App() {
                   ))}</div>
                 </div>
               )}
-            </AnimatePresence>
+            </div>
           )}
         </div>
       </main>
-      <AnimatePresence>{isModalOpen && (
+      {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
           <div className="card w-full max-w-md p-8">
             <h3 className="text-xl font-bold mb-6">Produto</h3>
@@ -316,15 +303,15 @@ export default function App() {
             </form>
           </div>
         </div>
-      )}</AnimatePresence>
-      <AnimatePresence>{confirmDialog && (
+      )}
+      {confirmDialog && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60">
           <div className="bg-white p-6 rounded-xl max-w-sm w-full">
             <h3 className="font-bold mb-4">{confirmDialog.message}</h3>
             <div className="flex gap-3"><button onClick={() => setConfirmDialog(null)} className="btn btn-secondary flex-1">Não</button><button onClick={confirmDialog.onConfirm} className="btn btn-primary bg-danger flex-1">Sim</button></div>
           </div>
         </div>
-      )}</AnimatePresence>
+      )}
     </div>
   );
 }
