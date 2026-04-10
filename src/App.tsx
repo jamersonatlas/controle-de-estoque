@@ -4,19 +4,20 @@ import {
   ArrowDownLeft, AlertTriangle, Edit2, Trash2, X, Download, 
   TrendingUp, Box, DollarSign, ClipboardCheck, FileText, 
   LogOut, User, Lock, ArrowRight, TrendingDown, BarChart3, 
-  Menu, CheckCircle2, AlertCircle, Eye, Calendar
+  Menu, CheckCircle2, AlertCircle, Eye, Calendar, Wallet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, StockEntry, Conference, Tab } from './types';
+import { Product, StockEntry, Conference, Tab, Expense } from './types';
 import { db } from './lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, writeBatch } from 'firebase/firestore';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [activeTab, setActiveTab] = useState<Tab | 'expenses'>('dashboard');
   const [products, setProducts] = useState<Product[]>([]);
   const [history, setHistory] = useState<StockEntry[]>([]);
   const [audits, setAudits] = useState<Conference[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -37,9 +38,7 @@ export default function App() {
     if (savedAuth === 'true') {
       setIsAuthenticated(true);
       fetchData();
-    } else {
-      setLoading(false);
-    }
+    } else { setLoading(false); }
   }, []);
 
   const fetchData = async () => {
@@ -47,11 +46,13 @@ export default function App() {
     try {
       const pSnap = await getDocs(query(collection(db, 'produtos'), orderBy('nome')));
       const pData = pSnap.docs.map(d => ({ id: d.id, ...d.data() })) as Product[];
+      
       const hSnap = await getDocs(query(collection(db, 'entradas_estoque'), orderBy('created_at', 'desc')));
       const hData = hSnap.docs.map(d => {
         const data = d.data();
         return { id: d.id, ...data, produto: pData.find(p => p.id === data.produto_id) };
       }) as StockEntry[];
+
       const cSnap = await getDocs(query(collection(db, 'conferencias'), orderBy('created_at', 'desc')));
       const iSnap = await getDocs(collection(db, 'conferencia_itens'));
       const allItems = iSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
@@ -60,9 +61,14 @@ export default function App() {
         const items = allItems.filter(i => i.conferencia_id === d.id).map(i => ({ ...i, produto: pData.find(p => p.id === i.produto_id) }));
         return { id: d.id, ...data, items };
       }) as Conference[];
+
+      const eSnap = await getDocs(query(collection(db, 'despesas'), orderBy('data', 'desc')));
+      const eData = eSnap.docs.map(d => ({ id: d.id, ...d.data() })) as Expense[];
+
       setProducts(pData);
       setHistory(hData);
       setAudits(cData);
+      setExpenses(eData);
     } catch (error) { console.error(error); } finally { setLoading(false); }
   };
 
@@ -81,6 +87,23 @@ export default function App() {
   const handleLogout = () => {
     setIsAuthenticated(false);
     localStorage.removeItem('estoqueapp_auth');
+  };
+
+  const handleAddExpense = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    try {
+      await addDoc(collection(db, 'despesas'), {
+        descricao: formData.get('descricao'),
+        valor: Number(formData.get('valor')),
+        categoria: formData.get('categoria'),
+        data: formData.get('data'),
+        created_at: new Date().toISOString()
+      });
+      fetchData();
+      showNotification('Despesa registrada!', 'success');
+      (e.target as HTMLFormElement).reset();
+    } catch (error) { showNotification('Erro ao salvar despesa.', 'error'); }
   };
 
   const handleFinishAudit = async () => {
@@ -107,25 +130,26 @@ export default function App() {
           fetchData();
           setAuditCounts({});
           setActiveTab('history_conferences');
-          showNotification('Salvo com sucesso!', 'success');
+          showNotification('Conferência salva!', 'success');
         } catch (e) { showNotification('Erro ao salvar.', 'error'); } finally { setLoading(false); }
       }
     });
   };
 
   const lowStockProducts = useMemo(() => products.filter(p => p.estoque_atual <= 5), [products]);
-  const stats = useMemo(() => {
-    const totalItems = products.reduce((acc, p) => acc + p.estoque_atual, 0);
-    const totalValue = products.reduce((acc, p) => acc + (p.estoque_atual * p.valor_venda), 0);
-    return { totalItems, totalValue };
-  }, [products]);
+  
+  const financialStats = useMemo(() => {
+    const totalVendas = audits.reduce((acc, a) => acc + (a.total_vendido || 0), 0);
+    const totalDespesas = expenses.reduce((acc, e) => acc + (e.valor || 0), 0);
+    return { totalVendas, totalDespesas, saldo: totalVendas - totalDespesas };
+  }, [audits, expenses]);
 
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-bg flex items-center justify-center p-4">
         <div className="w-full max-w-md card p-8 shadow-xl text-center">
-            <h1 className="text-3xl font-black mb-2 text-slate-800 tracking-tight">MARIA LANCHES</h1>
-            <p className="text-slate-400 mb-8 font-medium">Controle de Estoque</p>
+            <h1 className="text-3xl font-black mb-2 text-slate-800 tracking-tight italic">MARIA LANCHES</h1>
+            <p className="text-slate-400 mb-8 font-medium">Controle de Estoque e Finanças</p>
             <form onSubmit={handleLogin} className="space-y-6 text-left">
               <div><label className="label">Usuário</label><input name="user" required className="input" /></div>
               <div><label className="label">Senha</label><input name="pass" type="password" required className="input" /></div>
@@ -144,20 +168,20 @@ export default function App() {
           <div className="w-10 h-10 bg-warning rounded-lg flex items-center justify-center"><TrendingUp className="text-white w-6 h-6" /></div>
           <div><h1 className="font-bold text-white tracking-tight text-lg">Maria Lanches</h1></div>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           <button onClick={() => {setActiveTab('dashboard'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'dashboard' ? 'sidebar-item-active' : ''}`}><LayoutDashboard className="w-5 h-5" /> Dashboard</button>
+          <button onClick={() => {setActiveTab('expenses'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'expenses' ? 'sidebar-item-active' : ''}`}><Wallet className="w-5 h-5" /> Financeiro</button>
           <button onClick={() => {setActiveTab('products'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'products' ? 'sidebar-item-active' : ''}`}><Package className="w-5 h-5" /> Produtos</button>
           <button onClick={() => {setActiveTab('entry'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'entry' ? 'sidebar-item-active' : ''}`}><ArrowDownLeft className="w-5 h-5" /> Entrada</button>
           <button onClick={() => {setActiveTab('conference'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'conference' ? 'sidebar-item-active' : ''}`}><ClipboardCheck className="w-5 h-5" /> Conferência</button>
-          <div className="pt-6 pb-2 px-4"><p className="text-[10px] font-bold text-slate-500 uppercase">Histórico</p></div>
-          <button onClick={() => {setActiveTab('history_entries'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'history_entries' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Entradas</button>
-          <button onClick={() => {setActiveTab('history_conferences'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'history_conferences' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Conferências</button>
+          <div className="pt-6 pb-2 px-4"><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Relatórios</p></div>
+          <button onClick={() => {setActiveTab('history_conferences'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'history_conferences' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Hist. Vendas</button>
         </nav>
         <div className="p-4 border-t border-slate-700"><button onClick={handleLogout} className="sidebar-item text-slate-400"><LogOut className="w-5 h-5" /> Sair</button></div>
       </aside>
 
       <main className="flex-1 flex flex-col overflow-hidden w-full">
-        <header className="h-16 border-b bg-surface flex items-center px-4 lg:px-8 justify-between">
+        <header className="h-16 border-b bg-surface flex items-center px-4 lg:px-8 justify-between shadow-sm">
           <button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden p-2 text-slate-600"><Menu/></button>
           <h2 className="text-lg font-semibold text-slate-700 capitalize">{activeTab.replace('_', ' ')}</h2>
           <div className="w-6 lg:hidden" />
@@ -171,20 +195,19 @@ export default function App() {
                   {lowStockProducts.length > 0 && (
                     <div className="bg-rose-50 border-2 border-rose-100 p-4 rounded-2xl flex items-center gap-4">
                       <div className="p-2 bg-rose-500 text-white rounded-lg animate-pulse"><AlertTriangle /></div>
-                      <div>
-                        <p className="text-rose-800 font-bold">Atenção! Estoque Baixo</p>
-                        <p className="text-rose-600 text-sm">{lowStockProducts.map(p => p.nome).join(', ')} precisam de reposição.</p>
-                      </div>
+                      <div><p className="text-rose-800 font-bold">Estoque Baixo!</p><p className="text-rose-600 text-sm">Repor: {lowStockProducts.map(p => p.nome).join(', ')}</p></div>
                     </div>
                   )}
+                  
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="card p-6 flex items-center gap-4"><div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Package/></div><div><p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Produtos</p><p className="text-2xl font-bold text-slate-700">{products.length}</p></div></div>
-                    <div className="card p-6 flex items-center gap-4"><div className="p-3 bg-cyan-50 text-cyan-600 rounded-xl"><Box/></div><div><p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Estoque Total</p><p className="text-2xl font-bold text-slate-700">{stats.totalItems}</p></div></div>
-                    <div className="card p-6 flex items-center gap-4"><div className="p-3 bg-green-50 text-green-600 rounded-xl"><DollarSign/></div><div><p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Valor Total</p><p className="text-2xl font-bold text-slate-700">R$ {stats.totalValue.toLocaleString('pt-BR')}</p></div></div>
+                    <div className="card p-6 border-l-4 border-green-500 shadow-sm"><p className="text-xs font-bold text-slate-400 uppercase">Total Vendas</p><p className="text-2xl font-bold text-green-600">R$ {financialStats.totalVendas.toLocaleString('pt-BR')}</p></div>
+                    <div className="card p-6 border-l-4 border-rose-500 shadow-sm"><p className="text-xs font-bold text-slate-400 uppercase">Total Despesas</p><p className="text-2xl font-bold text-rose-600">R$ {financialStats.totalDespesas.toLocaleString('pt-BR')}</p></div>
+                    <div className="card p-6 border-l-4 border-blue-500 shadow-sm"><p className="text-xs font-bold text-slate-400 uppercase">Saldo (Lucro)</p><p className="text-2xl font-bold text-blue-600">R$ {financialStats.saldo.toLocaleString('pt-BR')}</p></div>
                   </div>
-                  <div className="card"><div className="p-6 border-b font-bold text-slate-700">Posição de Estoque</div>
+
+                  <div className="card"><div className="p-6 border-b font-bold text-slate-700">Posição Atual de Estoque</div>
                     <table className="w-full">
-                      <thead><tr className="bg-slate-50 text-left text-xs font-bold text-slate-500 uppercase"><th className="p-4">Produto</th><th className="p-4 text-center">Qtd</th><th className="p-4 text-right">Total</th></tr></thead>
+                      <thead><tr className="bg-slate-50 text-left text-xs font-bold text-slate-500 uppercase"><th className="p-4">Produto</th><th className="p-4 text-center">Qtd</th><th className="p-4 text-right">Valor</th></tr></thead>
                       <tbody className="divide-y">{products.map(p => (
                         <tr key={p.id} className="hover:bg-slate-50">
                           <td className="p-4 font-medium text-slate-700">{p.nome}</td>
@@ -196,34 +219,57 @@ export default function App() {
                   </div>
                 </motion.div>
               )}
-              {activeTab === 'history_conferences' && (
-                <div className="space-y-4">
-                  {audits.map(audit => (
-                    <div key={audit.id} className="card p-5 flex items-center justify-between hover:shadow-md transition-shadow">
-                      <div><div className="flex items-center gap-2 text-slate-400 text-sm mb-1"><Calendar className="w-4 h-4" /> {new Date(audit.data_conferencia).toLocaleString('pt-BR')}</div>
-                      <div className="font-bold text-slate-700 text-lg">Venda: <span className="text-green-600">R$ {audit.total_vendido.toLocaleString('pt-BR')}</span></div></div>
-                      <button onClick={() => setViewingAudit(audit)} className="btn btn-secondary px-6 flex items-center gap-2"><Eye className="w-4 h-4" /> Ver</button>
-                    </div>
-                  ))}
+
+              {activeTab === 'expenses' && (
+                <div className="space-y-8">
+                  <div className="card p-8 max-w-2xl mx-auto shadow-lg border-t-4 border-rose-500">
+                    <h3 className="text-xl font-bold mb-6 text-slate-700 flex items-center gap-2">Registrar Novo Gasto</h3>
+                    <form onSubmit={handleAddExpense} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="md:col-span-2"><label className="label">Descrição</label><input name="descricao" required className="input" placeholder="Ex: Gelo, Luz, Aluguel..." /></div>
+                      <div><label className="label">Valor (R$)</label><input name="valor" type="number" step="0.01" required className="input" placeholder="0,00" /></div>
+                      <div><label className="label">Data</label><input name="data" type="date" required defaultValue={new Date().toISOString().split('T')[0]} className="input" /></div>
+                      <div className="md:col-span-2"><label className="label">Categoria</label>
+                        <select name="categoria" className="input">
+                          <option>Mercadoria</option><option>Infraestrutura</option><option>Pessoal</option><option>Outros</option>
+                        </select>
+                      </div>
+                      <button className="md:col-span-2 btn btn-primary py-3 bg-rose-600 hover:bg-rose-700 border-none">Salvar Despesa</button>
+                    </form>
+                  </div>
+
+                  <div className="card">
+                    <div className="p-6 border-b font-bold text-slate-700">Histórico de Gastos</div>
+                    <div className="overflow-x-auto"><table className="w-full text-left text-sm">
+                      <thead><tr className="bg-slate-50 text-xs font-bold uppercase text-slate-500"><th className="p-4">Data</th><th className="p-4">Descrição</th><th className="p-4">Categoria</th><th className="p-4 text-right">Valor</th></tr></thead>
+                      <tbody className="divide-y">{expenses.map(e => (
+                        <tr key={e.id} className="hover:bg-slate-50">
+                          <td className="p-4">{new Date(e.data).toLocaleDateString('pt-BR')}</td>
+                          <td className="p-4 font-bold text-slate-700">{e.descricao}</td>
+                          <td className="p-4 text-xs font-bold text-slate-400 uppercase">{e.categoria}</td>
+                          <td className="p-4 text-right font-bold text-rose-600">R$ {e.valor.toLocaleString('pt-BR')}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table></div>
+                  </div>
                 </div>
               )}
+
               {activeTab === 'products' && (
                 <div className="space-y-6">
                   <div className="flex justify-between items-center"><input className="input w-64" placeholder="Buscar..." onChange={e => setSearchTerm(e.target.value)}/><button onClick={() => { setEditingProduct(null); setIsModalOpen(true); }} className="btn btn-primary"><Plus className="w-4 h-4"/> Novo</button></div>
-                  <div className="card divide-y">
-                    {products.filter(p => p.nome.toLowerCase().includes(searchTerm.toLowerCase())).map(p => (
+                  <div className="card divide-y">{products.filter(p => p.nome.toLowerCase().includes(searchTerm.toLowerCase())).map(p => (
                       <div key={p.id} className="p-4 flex justify-between items-center hover:bg-slate-50">
                         <div><p className="font-bold text-slate-700">{p.nome}</p><p className="text-xs text-slate-500">R$ {p.valor_venda.toLocaleString('pt-BR')}</p></div>
                         <div className="flex gap-2"><button onClick={() => { setEditingProduct(p); setIsModalOpen(true); }} className="p-2 bg-slate-100 rounded-lg"><Edit2 className="w-4 h-4"/></button></div>
                       </div>
-                    ))}
-                  </div>
+                    ))}</div>
                 </div>
               )}
+
               {activeTab === 'entry' && (
                 <div className="flex justify-center py-10"><div className="card w-full max-w-lg p-8 shadow-lg">
                   <h3 className="text-xl font-bold mb-6 text-slate-700 border-b pb-4">Entrada de Mercadoria</h3>
-                  <form onSubmit={(e) => {
+                  <form onSubmit={async (e) => {
                     e.preventDefault();
                     const formData = new FormData(e.currentTarget);
                     const p_id = formData.get('productId') as string;
@@ -233,7 +279,7 @@ export default function App() {
                     const batch = writeBatch(db);
                     batch.set(doc(collection(db, 'entradas_estoque')), { produto_id: p_id, quantidade_entrada: qtd, data_entrada: formData.get('date'), created_at: new Date().toISOString() });
                     batch.update(doc(db, 'produtos', p_id), { estoque_atual: p.estoque_atual + qtd });
-                    batch.commit().then(() => { fetchData(); setActiveTab('history_entries'); });
+                    await batch.commit(); fetchData(); setActiveTab('dashboard');
                   }} className="space-y-4">
                     <div><label className="label">Produto</label><select name="productId" required className="input"><option value="">Selecione</option>{products.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}</select></div>
                     <div><label className="label">Quantidade</label><input name="quantity" type="number" required className="input"/></div>
@@ -242,6 +288,7 @@ export default function App() {
                   </form>
                 </div></div>
               )}
+
               {activeTab === 'conference' && (
                 <div className="space-y-6">
                   <div className="flex justify-between items-center"><div><h3 className="font-bold text-slate-700 text-xl">Conferência Física</h3><p className="text-sm text-slate-400">Digite quanto tem no balcão</p></div><button onClick={handleFinishAudit} className="btn btn-primary px-10">Finalizar</button></div>
@@ -253,14 +300,16 @@ export default function App() {
                   ))}</div>
                 </div>
               )}
-              {activeTab === 'history_entries' && (
-                <div className="card"><div className="p-6 border-b font-bold text-slate-700">Entradas Recentes</div>
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500"><tr><th className="p-4">Data</th><th className="p-4">Produto</th><th className="p-4 text-center">Qtd</th></tr></thead>
-                    <tbody className="divide-y">{history.map(h => (
-                      <tr key={h.id} className="hover:bg-slate-50"><td className="p-4 text-sm text-slate-400">{new Date(h.data_entrada).toLocaleDateString('pt-BR')}</td><td className="p-4 font-medium text-slate-700">{h.produto?.nome || 'Excluído'}</td><td className="p-4 text-center font-bold text-green-600">+{h.quantidade_entrada}</td></tr>
-                    ))}</tbody>
-                  </table>
+
+              {activeTab === 'history_conferences' && (
+                <div className="space-y-4">
+                  {audits.map(audit => (
+                    <div key={audit.id} className="card p-5 flex items-center justify-between">
+                      <div><div className="flex items-center gap-2 text-slate-400 text-sm mb-1"><Calendar className="w-4 h-4" /> {new Date(audit.data_conferencia).toLocaleString('pt-BR')}</div>
+                      <div className="font-bold text-slate-700 text-lg">Venda: <span className="text-green-600">R$ {audit.total_vendido.toLocaleString('pt-BR')}</span></div></div>
+                      <button onClick={() => setViewingAudit(audit)} className="btn btn-secondary px-6 flex items-center gap-2"><Eye className="w-4 h-4" /> Ver</button>
+                    </div>
+                  ))}
                 </div>
               )}
             </AnimatePresence>
@@ -268,11 +317,12 @@ export default function App() {
         </div>
       </main>
 
+      {/* Comprovante */}
       <AnimatePresence>{viewingAudit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl w-full max-w-2xl p-8 shadow-2xl relative">
             <button onClick={() => setViewingAudit(null)} className="absolute top-4 right-4 p-2 text-slate-400"><X /></button>
-            <div className="text-center mb-8 border-b pb-6"><h3 className="text-2xl font-bold text-slate-800 tracking-tight text-uppercase">Maria Lanches</h3><p className="text-slate-400 font-medium">Recibo de Conferência - {new Date(viewingAudit.data_conferencia).toLocaleString('pt-BR')}</p></div>
+            <div className="text-center mb-8 border-b pb-6"><h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">MARIA LANCHES</h3><p className="text-slate-400 font-medium">Recibo de Venda - {new Date(viewingAudit.data_conferencia).toLocaleString('pt-BR')}</p></div>
             <div className="space-y-4 max-h-[350px] overflow-y-auto px-2">
               <table className="w-full text-sm">
                 <thead><tr className="text-slate-400 uppercase text-[10px] font-black border-b"><th className="pb-2 text-left">Item</th><th className="pb-2 text-center">Saída</th><th className="pb-2 text-right">Total</th></tr></thead>
@@ -290,16 +340,13 @@ export default function App() {
         </div>
       )}</AnimatePresence>
 
+      {/* Modal Editar Produto */}
       <AnimatePresence>{isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40">
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="card w-full max-w-md p-8 shadow-2xl">
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="card w-full max-w-md p-8">
             <h3 className="text-xl font-bold mb-6 text-slate-700">{editingProduct ? 'Editar' : 'Novo'} Produto</h3>
             <form onSubmit={async (e) => {
-              e.preventDefault();
-              const formData = new FormData(e.currentTarget);
-              const nome = formData.get('name') as string;
-              const estoque_atual = Number(formData.get('quantity'));
-              const valor_venda = Number(formData.get('price'));
+              e.preventDefault(); const formData = new FormData(e.currentTarget); const nome = formData.get('name') as string; const estoque_atual = Number(formData.get('quantity')); const valor_venda = Number(formData.get('price'));
               if (editingProduct) { await updateDoc(doc(db, 'produtos', editingProduct.id), { nome, estoque_atual, valor_venda }); }
               else { await addDoc(collection(db, 'produtos'), { nome, estoque_atual, valor_venda, created_at: new Date().toISOString() }); }
               fetchData(); setIsModalOpen(false); setEditingProduct(null);
