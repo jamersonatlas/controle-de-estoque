@@ -54,7 +54,6 @@ export default function App() {
         return { id: d.id, ...data, produto: pData.find(p => p.id === data.produto_id) };
       }) as StockEntry[];
 
-      // BUSCA AS CONFERÊNCIAS E OS ITENS VENDIDOS
       const cSnap = await getDocs(query(collection(db, 'conferencias'), orderBy('created_at', 'desc')));
       const iSnap = await getDocs(collection(db, 'conferencia_itens'));
       const allItems = iSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
@@ -63,10 +62,7 @@ export default function App() {
         const data = d.data();
         const items = allItems
           .filter(i => i.conferencia_id === d.id)
-          .map(i => ({ 
-            ...i, 
-            produto: pData.find(p => p.id === i.produto_id) 
-          }));
+          .map(i => ({ ...i, produto: pData.find(p => p.id === i.produto_id) }));
         return { id: d.id, ...data, items };
       }) as Conference[];
 
@@ -115,10 +111,8 @@ export default function App() {
             const contado = auditCounts[p.id] ?? p.estoque_atual;
             const saida = p.estoque_atual - contado;
             const valorTotalItem = saida > 0 ? saida * p.valor_venda : 0;
-            
             if (saida > 0) totalVenda += valorTotalItem;
             
-            // Grava cada item vendido
             batch.set(doc(collection(db, 'conferencia_itens')), { 
               conferencia_id: confRef.id, 
               produto_id: p.id, 
@@ -128,12 +122,9 @@ export default function App() {
               valor_unitario: p.valor_venda, 
               valor_total: valorTotalItem 
             });
-            
-            // Atualiza o estoque do produto
             batch.update(doc(db, 'produtos', p.id), { estoque_atual: contado });
           });
           
-          // Grava o resumo da conferência
           batch.set(confRef, { 
             data_conferencia: new Date().toISOString(), 
             total_vendido: totalVenda, 
@@ -144,17 +135,14 @@ export default function App() {
           fetchData();
           setAuditCounts({});
           setActiveTab('history_conferences');
-          showNotification('Conferência salva com sucesso!', 'success');
+          showNotification('Conferência salva!', 'success');
         } catch (e) { 
-          showNotification('Erro ao salvar conferência.', 'error'); 
-        } finally { 
-          setLoading(false); 
-        }
+          showNotification('Erro ao salvar.', 'error'); 
+        } finally { setLoading(false); }
       }
     });
   };
 
-  // Restante das funções (Produtos e Entradas)
   const handleSaveProduct = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -224,34 +212,51 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-bg overflow-hidden">
-      <aside className={`fixed inset-y-0 left-0 w-64 bg-sidebar flex flex-col shadow-xl z-40 lg:relative lg:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-10 h-10 bg-warning rounded-lg flex items-center justify-center shadow-md"><TrendingUp className="text-white w-6 h-6" /></div>
-          <div><h1 className="font-bold text-white tracking-tight text-lg">EstoqueApp</h1></div>
+      {/* Overlay para fechar o menu clicando fora */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            onClick={() => setIsMobileMenuOpen(false)} 
+            className="fixed inset-0 bg-slate-900/60 z-30 lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
+      <aside className={`fixed inset-y-0 left-0 w-64 bg-sidebar flex flex-col shadow-xl z-40 transition-transform duration-300 lg:relative lg:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="p-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-warning rounded-lg flex items-center justify-center shadow-md"><TrendingUp className="text-white w-6 h-6" /></div>
+            <div><h1 className="font-bold text-white tracking-tight">EstoqueApp</h1></div>
+          </div>
+          <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden text-slate-400"><X /></button>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
-          <button onClick={() => setActiveTab('dashboard')} className={`sidebar-item ${activeTab === 'dashboard' ? 'sidebar-item-active' : ''}`}><LayoutDashboard className="w-5 h-5" /> Dashboard</button>
-          <button onClick={() => setActiveTab('products')} className={`sidebar-item ${activeTab === 'products' ? 'sidebar-item-active' : ''}`}><Package className="w-5 h-5" /> Produtos</button>
-          <button onClick={() => setActiveTab('entry')} className={`sidebar-item ${activeTab === 'entry' ? 'sidebar-item-active' : ''}`}><ArrowDownLeft className="w-5 h-5" /> Entrada</button>
-          <button onClick={() => setActiveTab('conference')} className={`sidebar-item ${activeTab === 'conference' ? 'sidebar-item-active' : ''}`}><ClipboardCheck className="w-5 h-5" /> Conferência</button>
+          <button onClick={() => {setActiveTab('dashboard'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'dashboard' ? 'sidebar-item-active' : ''}`}><LayoutDashboard className="w-5 h-5" /> Dashboard</button>
+          <button onClick={() => {setActiveTab('products'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'products' ? 'sidebar-item-active' : ''}`}><Package className="w-5 h-5" /> Produtos</button>
+          <button onClick={() => {setActiveTab('entry'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'entry' ? 'sidebar-item-active' : ''}`}><ArrowDownLeft className="w-5 h-5" /> Entrada</button>
+          <button onClick={() => {setActiveTab('conference'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'conference' ? 'sidebar-item-active' : ''}`}><ClipboardCheck className="w-5 h-5" /> Conferência</button>
           <div className="pt-6 pb-2 px-4"><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Histórico</p></div>
-          <button onClick={() => setActiveTab('history_entries')} className={`sidebar-item ${activeTab === 'history_entries' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Entradas</button>
-          <button onClick={() => setActiveTab('history_conferences')} className={`sidebar-item ${activeTab === 'history_conferences' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Conferências</button>
+          <button onClick={() => {setActiveTab('history_entries'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'history_entries' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Entradas</button>
+          <button onClick={() => {setActiveTab('history_conferences'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'history_conferences' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Conferências</button>
         </nav>
         <div className="p-4 border-t border-slate-700"><button onClick={handleLogout} className="sidebar-item text-slate-400"><LogOut className="w-5 h-5" /> Sair</button></div>
       </aside>
 
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 border-b bg-surface flex items-center px-8 justify-between shadow-sm">
-          <button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden"><Menu/></button>
+      <main className="flex-1 flex flex-col overflow-hidden w-full">
+        <header className="h-16 border-b bg-surface flex items-center px-4 lg:px-8 justify-between shadow-sm">
+          <button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden p-2 text-slate-600"><Menu/></button>
           <h2 className="text-lg font-semibold text-slate-700 capitalize">{activeTab.replace('_', ' ')}</h2>
+          <div className="w-6 lg:hidden" />
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
           {loading ? <div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-sidebar"></div></div> : (
-            <>
+            <AnimatePresence mode="wait">
               {activeTab === 'dashboard' && (
-                <div className="space-y-8">
+                <motion.div key="db" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="card p-6 flex items-center gap-4"><div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Package/></div><div><p className="text-xs font-bold text-slate-400">PRODUTOS</p><p className="text-2xl font-bold text-slate-700">{products.length}</p></div></div>
                     <div className="card p-6 flex items-center gap-4"><div className="p-3 bg-cyan-50 text-cyan-600 rounded-xl"><Box/></div><div><p className="text-xs font-bold text-slate-400">ITENS ESTOQUE</p><p className="text-2xl font-bold text-slate-700">{stats.totalItems}</p></div></div>
@@ -269,10 +274,9 @@ export default function App() {
                       ))}</tbody>
                     </table>
                   </div>
-                </div>
+                </motion.div>
               )}
 
-              {/* ABA DE HISTÓRICO DE CONFERÊNCIAS (ONDE ESTAVA O ERRO) */}
               {activeTab === 'history_conferences' && (
                 <div className="space-y-4">
                   {audits.map(audit => (
@@ -284,7 +288,6 @@ export default function App() {
                       <button onClick={() => setViewingAudit(audit)} className="btn btn-secondary px-6 flex items-center gap-2"><Eye className="w-4 h-4" /> Ver Comprovante</button>
                     </div>
                   ))}
-                  {audits.length === 0 && <div className="card p-12 text-center text-slate-400">Nenhuma conferência realizada.</div>}
                 </div>
               )}
 
@@ -336,20 +339,19 @@ export default function App() {
                   </table>
                 </div>
               )}
-            </>
+            </AnimatePresence>
           )}
         </div>
       </main>
 
-      {/* MODAL DO COMPROVANTE (O "EXTRATO" DA VENDA) */}
+      {/* Comprovante */}
       <AnimatePresence>{viewingAudit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl w-full max-w-2xl p-8 shadow-2xl relative overflow-hidden">
             <button onClick={() => setViewingAudit(null)} className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600"><X /></button>
             <div className="text-center mb-8 border-b pb-6">
-              <div className="flex justify-center mb-2"><div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-sidebar"><FileText/></div></div>
               <h3 className="text-2xl font-bold text-slate-800 tracking-tight">Comprovante de Conferência</h3>
-              <p className="text-slate-400 font-medium">Esquina do Espeto - {new Date(viewingAudit.data_conferencia).toLocaleString('pt-BR')}</p>
+              <p className="text-slate-400 font-medium">{new Date(viewingAudit.data_conferencia).toLocaleString('pt-BR')}</p>
             </div>
             <div className="space-y-4 max-h-[350px] overflow-y-auto px-2">
               <table className="w-full text-sm">
@@ -369,7 +371,6 @@ export default function App() {
             <div className="mt-8 pt-6 border-t border-dashed flex justify-between items-center">
               <div className="text-slate-400 font-bold uppercase text-xs tracking-widest">Resumo Financeiro</div>
               <div className="text-right">
-                <p className="text-slate-500 text-xs font-medium uppercase">Total das Vendas:</p>
                 <p className="text-4xl font-black text-green-600">R$ {viewingAudit.total_vendido.toLocaleString('pt-BR')}</p>
               </div>
             </div>
