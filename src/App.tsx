@@ -103,58 +103,61 @@ export default function App() {
       fetchData();
       showNotification('Despesa registrada!', 'success');
       (e.target as HTMLFormElement).reset();
-    } catch (error) { showNotification('Erro ao salvar despesa.', 'error'); }
+    } catch (error) { showNotification('Erro ao registrar despesa.', 'error'); }
   };
 
   const handleFinishAudit = async () => {
     setConfirmDialog({
       title: 'Finalizar Conferência',
-      message: 'Confirmar vendas e atualizar estoque?',
+      message: 'Deseja atualizar o estoque e gerar venda?',
       onConfirm: async () => {
         setConfirmDialog(null);
         setLoading(true);
         try {
           const batch = writeBatch(db);
           const confRef = doc(collection(db, 'conferencias'));
-          let totalVenda = 0;
+          let total = 0;
           products.forEach(p => {
             const contado = auditCounts[p.id] ?? p.estoque_atual;
             const saida = p.estoque_atual - contado;
-            const valorTotalItem = saida > 0 ? saida * p.valor_venda : 0;
-            if (saida > 0) totalVenda += valorTotalItem;
-            batch.set(doc(collection(db, 'conferencia_itens')), { conferencia_id: confRef.id, produto_id: p.id, estoque_anterior: p.estoque_atual, estoque_contado: contado, quantidade_saida: saida, valor_unitario: p.valor_venda, valor_total: valorTotalItem });
+            const val = saida > 0 ? saida * p.valor_venda : 0;
+            if (saida > 0) total += val;
+            batch.set(doc(collection(db, 'conferencia_itens')), { conferencia_id: confRef.id, produto_id: p.id, estoque_anterior: p.estoque_atual, estoque_contado: contado, quantidade_saida: saida, valor_unitario: p.valor_venda, valor_total: val });
             batch.update(doc(db, 'produtos', p.id), { estoque_atual: contado });
           });
-          batch.set(confRef, { data_conferencia: new Date().toISOString(), total_vendido: totalVenda, created_at: new Date().toISOString() });
+          batch.set(confRef, { data_conferencia: new Date().toISOString(), total_vendido: total, created_at: new Date().toISOString() });
           await batch.commit();
           fetchData();
           setAuditCounts({});
           setActiveTab('history_conferences');
-          showNotification('Conferência salva!', 'success');
-        } catch (e) { showNotification('Erro ao salvar.', 'error'); } finally { setLoading(false); }
+          showNotification('Conferência finalizada!', 'success');
+        } catch (e) { showNotification('Erro ao salvar.', 'error'); }
+        finally { setLoading(false); }
       }
     });
   };
 
   const lowStockProducts = useMemo(() => products.filter(p => p.estoque_atual <= 5), [products]);
   
-  const financialStats = useMemo(() => {
+  const stats = useMemo(() => {
+    const totalItens = products.reduce((acc, p) => acc + p.estoque_atual, 0);
+    const valorEstoque = products.reduce((acc, p) => acc + (p.estoque_atual * p.valor_venda), 0);
     const totalVendas = audits.reduce((acc, a) => acc + (a.total_vendido || 0), 0);
     const totalDespesas = expenses.reduce((acc, e) => acc + (e.valor || 0), 0);
-    return { totalVendas, totalDespesas, saldo: totalVendas - totalDespesas };
-  }, [audits, expenses]);
+    return { totalItens, valorEstoque, totalVendas, totalDespesas, saldo: totalVendas - totalDespesas };
+  }, [products, audits, expenses]);
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-bg flex items-center justify-center p-4">
-        <div className="w-full max-w-md card p-8 shadow-xl text-center">
-            <h1 className="text-3xl font-black mb-2 text-slate-800 tracking-tight italic">MARIA LANCHES</h1>
-            <p className="text-slate-400 mb-8 font-medium">Controle de Estoque e Finanças</p>
-            <form onSubmit={handleLogin} className="space-y-6 text-left">
-              <div><label className="label">Usuário</label><input name="user" required className="input" /></div>
-              <div><label className="label">Senha</label><input name="pass" type="password" required className="input" /></div>
-              <button type="submit" className="btn btn-primary w-full py-3">Entrar</button>
-            </form>
+      <div className="min-h-screen bg-bg flex items-center justify-center p-4 text-center">
+        <div className="w-full max-w-md card p-8 shadow-2xl">
+          <h1 className="text-3xl font-black mb-2 text-slate-800 tracking-tight italic">MARIA LANCHES</h1>
+          <p className="text-slate-400 mb-8 font-medium italic">Sistema de Gestão</p>
+          <form onSubmit={handleLogin} className="space-y-6 text-left">
+            <div><label className="label">Usuário</label><input name="user" required className="input" /></div>
+            <div><label className="label">Senha</label><input name="pass" type="password" required className="input" /></div>
+            <button type="submit" className="btn btn-primary w-full py-3">Entrar</button>
+          </form>
         </div>
       </div>
     );
@@ -165,8 +168,8 @@ export default function App() {
       <AnimatePresence>{isMobileMenuOpen && ( <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsMobileMenuOpen(false)} className="fixed inset-0 bg-slate-900/60 z-30 lg:hidden" /> )}</AnimatePresence>
       <aside className={`fixed inset-y-0 left-0 w-64 bg-sidebar flex flex-col shadow-xl z-40 transition-transform duration-300 lg:relative lg:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-6 flex items-center gap-3">
-          <div className="w-10 h-10 bg-warning rounded-lg flex items-center justify-center"><TrendingUp className="text-white w-6 h-6" /></div>
-          <div><h1 className="font-bold text-white tracking-tight text-lg">Maria Lanches</h1></div>
+          <div className="w-10 h-10 bg-warning rounded-lg flex items-center justify-center shadow-md"><TrendingUp className="text-white w-6 h-6" /></div>
+          <div><h1 className="font-bold text-white tracking-tight text-lg italic">Maria Lanches</h1></div>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           <button onClick={() => {setActiveTab('dashboard'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'dashboard' ? 'sidebar-item-active' : ''}`}><LayoutDashboard className="w-5 h-5" /> Dashboard</button>
@@ -175,6 +178,7 @@ export default function App() {
           <button onClick={() => {setActiveTab('entry'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'entry' ? 'sidebar-item-active' : ''}`}><ArrowDownLeft className="w-5 h-5" /> Entrada</button>
           <button onClick={() => {setActiveTab('conference'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'conference' ? 'sidebar-item-active' : ''}`}><ClipboardCheck className="w-5 h-5" /> Conferência</button>
           <div className="pt-6 pb-2 px-4"><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Relatórios</p></div>
+          <button onClick={() => {setActiveTab('history_entries'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'history_entries' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Hist. Entradas</button>
           <button onClick={() => {setActiveTab('history_conferences'); setIsMobileMenuOpen(false);}} className={`sidebar-item ${activeTab === 'history_conferences' ? 'sidebar-item-active' : ''}`}><History className="w-5 h-5" /> Hist. Vendas</button>
         </nav>
         <div className="p-4 border-t border-slate-700"><button onClick={handleLogout} className="sidebar-item text-slate-400"><LogOut className="w-5 h-5" /> Sair</button></div>
@@ -199,15 +203,18 @@ export default function App() {
                     </div>
                   )}
                   
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="card p-6 border-l-4 border-green-500 shadow-sm"><p className="text-xs font-bold text-slate-400 uppercase">Total Vendas</p><p className="text-2xl font-bold text-green-600">R$ {financialStats.totalVendas.toLocaleString('pt-BR')}</p></div>
-                    <div className="card p-6 border-l-4 border-rose-500 shadow-sm"><p className="text-xs font-bold text-slate-400 uppercase">Total Despesas</p><p className="text-2xl font-bold text-rose-600">R$ {financialStats.totalDespesas.toLocaleString('pt-BR')}</p></div>
-                    <div className="card p-6 border-l-4 border-blue-500 shadow-sm"><p className="text-xs font-bold text-slate-400 uppercase">Saldo (Lucro)</p><p className="text-2xl font-bold text-blue-600">R$ {financialStats.saldo.toLocaleString('pt-BR')}</p></div>
+                  {/* TODOS OS CARDS JUNTOS (OS 3 ANTIGOS + FINANCEIRO) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                    <div className="card p-5 border-l-4 border-slate-800 shadow-sm"><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Produtos</p><p className="text-xl font-bold">{products.length}</p></div>
+                    <div className="card p-5 border-l-4 border-blue-500 shadow-sm"><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Itens Estoque</p><p className="text-xl font-bold">{stats.totalItens}</p></div>
+                    <div className="card p-5 border-l-4 border-cyan-500 shadow-sm"><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Valor Estoque</p><p className="text-xl font-bold">R$ {stats.valorEstoque.toLocaleString('pt-BR')}</p></div>
+                    <div className="card p-5 border-l-4 border-green-500 shadow-sm"><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Vendas (Total)</p><p className="text-xl font-bold text-green-600">R$ {stats.totalVendas.toLocaleString('pt-BR')}</p></div>
+                    <div className="card p-5 border-l-4 border-rose-500 shadow-sm"><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Despesas (Total)</p><p className="text-xl font-bold text-rose-600">R$ {stats.totalDespesas.toLocaleString('pt-BR')}</p></div>
                   </div>
 
-                  <div className="card"><div className="p-6 border-b font-bold text-slate-700">Posição Atual de Estoque</div>
-                    <table className="w-full">
-                      <thead><tr className="bg-slate-50 text-left text-xs font-bold text-slate-500 uppercase"><th className="p-4">Produto</th><th className="p-4 text-center">Qtd</th><th className="p-4 text-right">Valor</th></tr></thead>
+                  <div className="card"><div className="p-6 border-b font-bold text-slate-700">Tabela de Estoque Atual</div>
+                    <div className="overflow-x-auto"><table className="w-full text-left">
+                      <thead><tr className="bg-slate-50 text-xs font-bold text-slate-500 uppercase"><th className="p-4">Produto</th><th className="p-4 text-center">Qtd</th><th className="p-4 text-right">Valor em Mãos</th></tr></thead>
                       <tbody className="divide-y">{products.map(p => (
                         <tr key={p.id} className="hover:bg-slate-50">
                           <td className="p-4 font-medium text-slate-700">{p.nome}</td>
@@ -215,69 +222,65 @@ export default function App() {
                           <td className="p-4 text-right font-bold text-slate-700">R$ {(p.estoque_atual * p.valor_venda).toLocaleString('pt-BR')}</td>
                         </tr>
                       ))}</tbody>
-                    </table>
+                    </table></div>
                   </div>
                 </motion.div>
               )}
 
+              {/* ABA FINANCEIRO */}
               {activeTab === 'expenses' && (
                 <div className="space-y-8">
                   <div className="card p-8 max-w-2xl mx-auto shadow-lg border-t-4 border-rose-500">
-                    <h3 className="text-xl font-bold mb-6 text-slate-700 flex items-center gap-2">Registrar Novo Gasto</h3>
+                    <h3 className="text-xl font-bold mb-6 text-slate-700">Registrar Gasto (Saída)</h3>
                     <form onSubmit={handleAddExpense} className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="md:col-span-2"><label className="label">Descrição</label><input name="descricao" required className="input" placeholder="Ex: Gelo, Luz, Aluguel..." /></div>
                       <div><label className="label">Valor (R$)</label><input name="valor" type="number" step="0.01" required className="input" placeholder="0,00" /></div>
                       <div><label className="label">Data</label><input name="data" type="date" required defaultValue={new Date().toISOString().split('T')[0]} className="input" /></div>
-                      <div className="md:col-span-2"><label className="label">Categoria</label>
-                        <select name="categoria" className="input">
-                          <option>Mercadoria</option><option>Infraestrutura</option><option>Pessoal</option><option>Outros</option>
-                        </select>
-                      </div>
+                      <div className="md:col-span-2"><label className="label">Categoria</label><select name="categoria" className="input"><option>Mercadoria</option><option>Infraestrutura</option><option>Pessoal</option><option>Outros</option></select></div>
                       <button className="md:col-span-2 btn btn-primary py-3 bg-rose-600 hover:bg-rose-700 border-none">Salvar Despesa</button>
                     </form>
                   </div>
-
-                  <div className="card">
-                    <div className="p-6 border-b font-bold text-slate-700">Histórico de Gastos</div>
+                  <div className="card"><div className="p-6 border-b font-bold text-slate-700">Últimos Gastos</div>
                     <div className="overflow-x-auto"><table className="w-full text-left text-sm">
-                      <thead><tr className="bg-slate-50 text-xs font-bold uppercase text-slate-500"><th className="p-4">Data</th><th className="p-4">Descrição</th><th className="p-4">Categoria</th><th className="p-4 text-right">Valor</th></tr></thead>
+                      <thead><tr className="bg-slate-50 text-xs font-bold uppercase text-slate-500"><th className="p-4">Data</th><th className="p-4">Descrição</th><th className="p-4 text-right">Valor</th></tr></thead>
                       <tbody className="divide-y">{expenses.map(e => (
-                        <tr key={e.id} className="hover:bg-slate-50">
-                          <td className="p-4">{new Date(e.data).toLocaleDateString('pt-BR')}</td>
-                          <td className="p-4 font-bold text-slate-700">{e.descricao}</td>
-                          <td className="p-4 text-xs font-bold text-slate-400 uppercase">{e.categoria}</td>
-                          <td className="p-4 text-right font-bold text-rose-600">R$ {e.valor.toLocaleString('pt-BR')}</td>
-                        </tr>
+                        <tr key={e.id} className="hover:bg-slate-50"><td className="p-4">{new Date(e.data).toLocaleDateString('pt-BR')}</td><td className="p-4 font-bold">{e.descricao}</td><td className="p-4 text-right font-bold text-rose-600">R$ {e.valor.toLocaleString('pt-BR')}</td></tr>
                       ))}</tbody>
                     </table></div>
                   </div>
                 </div>
               )}
 
+              {/* HISTÓRICO DE ENTRADAS (RESTAURADO) */}
+              {activeTab === 'history_entries' && (
+                <div className="card"><div className="p-6 border-b font-bold text-slate-700">Relatório de Entradas</div>
+                  <div className="overflow-x-auto"><table className="w-full text-left">
+                    <thead><tr className="bg-slate-50 text-xs font-bold uppercase text-slate-500"><th className="p-4">Data</th><th className="p-4">Produto</th><th className="p-4 text-center">Quantidade</th></tr></thead>
+                    <tbody className="divide-y">{history.map(h => (
+                      <tr key={h.id} className="hover:bg-slate-50"><td className="p-4">{new Date(h.data_entrada).toLocaleDateString('pt-BR')}</td><td className="p-4 font-medium">{h.produto?.nome || 'Excluído'}</td><td className="p-4 text-center font-bold text-green-600">+{h.quantidade_entrada}</td></tr>
+                    ))}</tbody>
+                  </table></div>
+                </div>
+              )}
+
+              {/* OUTRAS ABAS MANTIDAS IGUAIS */}
               {activeTab === 'products' && (
                 <div className="space-y-6">
-                  <div className="flex justify-between items-center"><input className="input w-64" placeholder="Buscar..." onChange={e => setSearchTerm(e.target.value)}/><button onClick={() => { setEditingProduct(null); setIsModalOpen(true); }} className="btn btn-primary"><Plus className="w-4 h-4"/> Novo</button></div>
+                  <div className="flex justify-between items-center"><input className="input w-64" placeholder="Buscar..." onChange={e => setSearchTerm(e.target.value)}/><button onClick={() => { setEditingProduct(null); setIsModalOpen(true); }} className="btn btn-primary">Novo Produto</button></div>
                   <div className="card divide-y">{products.filter(p => p.nome.toLowerCase().includes(searchTerm.toLowerCase())).map(p => (
                       <div key={p.id} className="p-4 flex justify-between items-center hover:bg-slate-50">
-                        <div><p className="font-bold text-slate-700">{p.nome}</p><p className="text-xs text-slate-500">R$ {p.valor_venda.toLocaleString('pt-BR')}</p></div>
+                        <div><p className="font-bold">{p.nome}</p><p className="text-xs text-slate-500">Preço: R$ {p.valor_venda.toLocaleString('pt-BR')}</p></div>
                         <div className="flex gap-2"><button onClick={() => { setEditingProduct(p); setIsModalOpen(true); }} className="p-2 bg-slate-100 rounded-lg"><Edit2 className="w-4 h-4"/></button></div>
                       </div>
                     ))}</div>
                 </div>
               )}
-
               {activeTab === 'entry' && (
                 <div className="flex justify-center py-10"><div className="card w-full max-w-lg p-8 shadow-lg">
-                  <h3 className="text-xl font-bold mb-6 text-slate-700 border-b pb-4">Entrada de Mercadoria</h3>
+                  <h3 className="text-xl font-bold mb-6 text-slate-700 border-b pb-4">Entrada de Estoque</h3>
                   <form onSubmit={async (e) => {
-                    e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
-                    const p_id = formData.get('productId') as string;
-                    const qtd = Number(formData.get('quantity'));
-                    const p = products.find(prod => prod.id === p_id);
-                    if (!p) return;
-                    const batch = writeBatch(db);
-                    batch.set(doc(collection(db, 'entradas_estoque')), { produto_id: p_id, quantidade_entrada: qtd, data_entrada: formData.get('date'), created_at: new Date().toISOString() });
+                    e.preventDefault(); const formData = new FormData(e.currentTarget); const p_id = formData.get('productId') as string; const qtd = Number(formData.get('quantity')); const p = products.find(prod => prod.id === p_id); if (!p) return;
+                    const batch = writeBatch(db); batch.set(doc(collection(db, 'entradas_estoque')), { produto_id: p_id, quantidade_entrada: qtd, data_entrada: formData.get('date'), created_at: new Date().toISOString() });
                     batch.update(doc(db, 'produtos', p_id), { estoque_atual: p.estoque_atual + qtd });
                     await batch.commit(); fetchData(); setActiveTab('dashboard');
                   }} className="space-y-4">
@@ -288,26 +291,24 @@ export default function App() {
                   </form>
                 </div></div>
               )}
-
               {activeTab === 'conference' && (
                 <div className="space-y-6">
-                  <div className="flex justify-between items-center"><div><h3 className="font-bold text-slate-700 text-xl">Conferência Física</h3><p className="text-sm text-slate-400">Digite quanto tem no balcão</p></div><button onClick={handleFinishAudit} className="btn btn-primary px-10">Finalizar</button></div>
+                  <div className="flex justify-between items-center"><div><h3 className="font-bold text-slate-700 text-xl">Conferência Física</h3><p className="text-sm text-slate-400">Digite a contagem real</p></div><button onClick={handleFinishAudit} className="btn btn-primary px-10">Finalizar</button></div>
                   <div className="card divide-y">{products.map(p => (
                     <div key={p.id} className="p-4 flex justify-between items-center hover:bg-slate-50">
-                      <span className="font-bold text-slate-700">{p.nome}</span>
+                      <span className="font-bold">{p.nome}</span>
                       <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Sistema: {p.estoque_atual}</span><input type="number" className="input w-24 text-center" placeholder="Real" onChange={e => setAuditCounts(prev => ({...prev, [p.id]: Number(e.target.value)}))}/></div>
                     </div>
                   ))}</div>
                 </div>
               )}
-
               {activeTab === 'history_conferences' && (
                 <div className="space-y-4">
                   {audits.map(audit => (
                     <div key={audit.id} className="card p-5 flex items-center justify-between">
                       <div><div className="flex items-center gap-2 text-slate-400 text-sm mb-1"><Calendar className="w-4 h-4" /> {new Date(audit.data_conferencia).toLocaleString('pt-BR')}</div>
-                      <div className="font-bold text-slate-700 text-lg">Venda: <span className="text-green-600">R$ {audit.total_vendido.toLocaleString('pt-BR')}</span></div></div>
-                      <button onClick={() => setViewingAudit(audit)} className="btn btn-secondary px-6 flex items-center gap-2"><Eye className="w-4 h-4" /> Ver</button>
+                      <div className="font-bold text-slate-700 text-lg">Faturamento: <span className="text-green-600">R$ {audit.total_vendido.toLocaleString('pt-BR')}</span></div></div>
+                      <button onClick={() => setViewingAudit(audit)} className="btn btn-secondary px-6 flex items-center gap-2"><Eye className="w-4 h-4" /> Detalhes</button>
                     </div>
                   ))}
                 </div>
@@ -317,12 +318,12 @@ export default function App() {
         </div>
       </main>
 
-      {/* Comprovante */}
+      {/* COMPROVANTE */}
       <AnimatePresence>{viewingAudit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl w-full max-w-2xl p-8 shadow-2xl relative">
-            <button onClick={() => setViewingAudit(null)} className="absolute top-4 right-4 p-2 text-slate-400"><X /></button>
-            <div className="text-center mb-8 border-b pb-6"><h3 className="text-2xl font-bold text-slate-800 tracking-tight italic">MARIA LANCHES</h3><p className="text-slate-400 font-medium">Recibo de Venda - {new Date(viewingAudit.data_conferencia).toLocaleString('pt-BR')}</p></div>
+            <button onClick={() => setViewingAudit(null)} className="absolute top-4 right-4 p-2 text-slate-400 hover:bg-slate-100 rounded-full"><X /></button>
+            <div className="text-center mb-8 border-b pb-6"><h3 className="text-2xl font-bold text-slate-800 italic uppercase">MARIA LANCHES</h3><p className="text-slate-400 font-medium">Comprovante de Venda - {new Date(viewingAudit.data_conferencia).toLocaleString('pt-BR')}</p></div>
             <div className="space-y-4 max-h-[350px] overflow-y-auto px-2">
               <table className="w-full text-sm">
                 <thead><tr className="text-slate-400 uppercase text-[10px] font-black border-b"><th className="pb-2 text-left">Item</th><th className="pb-2 text-center">Saída</th><th className="pb-2 text-right">Total</th></tr></thead>
@@ -340,7 +341,7 @@ export default function App() {
         </div>
       )}</AnimatePresence>
 
-      {/* Modal Editar Produto */}
+      {/* MODAL EDITAR PRODUTO */}
       <AnimatePresence>{isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40">
           <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="card w-full max-w-md p-8">
@@ -359,6 +360,7 @@ export default function App() {
         </div>
       )}</AnimatePresence>
 
+      {/* MODAL CONFIRMAÇÃO */}
       <AnimatePresence>{confirmDialog && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60"><div className="bg-white p-6 rounded-2xl max-w-sm w-full shadow-2xl"><h3 className="font-bold text-lg mb-4 text-slate-800">{confirmDialog.message}</h3><div className="flex gap-3"><button onClick={() => setConfirmDialog(null)} className="btn btn-secondary flex-1">Não</button><button onClick={confirmDialog.onConfirm} className="btn btn-primary bg-danger flex-1">Sim</button></div></div></div>
       )}</AnimatePresence>
