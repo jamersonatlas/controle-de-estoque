@@ -39,6 +39,15 @@ export interface ConferenceItem {
   produto?: Product;
 }
 
+export interface Expense {
+  id: string;
+  descricao: string;
+  valor: number;
+  data: string;
+  categoria: string;
+  created_at: string;
+}
+
 export type Tab = 
   | 'dashboard' 
   | 'products' 
@@ -46,4 +55,5 @@ export type Tab =
   | 'conference' 
   | 'history_entries' 
   | 'history_conferences' 
-  | 'reports';
+  | 'reports'
+  | 'expenses';
